@@ -14,11 +14,10 @@ the configured limit we report a loop.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
-from .transcript import ToolCall
+from .transcript import ToolCall, TrailingRun, tool_signature
 
 
 @dataclass
@@ -31,12 +30,8 @@ class LoopInfo:
 
 
 def _signature(call: ToolCall) -> str:
-    """Canonical identity of a tool call: name + sorted-key JSON of input."""
-    try:
-        payload = json.dumps(call.input, sort_keys=True, default=str)
-    except (TypeError, ValueError):  # pragma: no cover - default=str is broad
-        payload = repr(call.input)
-    return f"{call.name}\x00{payload}"
+    """Canonical identity of a tool call (delegates to ``tool_signature``)."""
+    return tool_signature(call)
 
 
 def trailing_repeat(calls: Sequence[ToolCall]) -> int:
@@ -71,9 +66,37 @@ def detect_loop(
     return None
 
 
+def detect_loop_run(
+    run: TrailingRun, limit: Optional[int]
+) -> Optional[LoopInfo]:
+    """Loop check over a streamed :class:`TrailingRun` state.
+
+    Equivalent to :func:`detect_loop` but operating on the O(1)-memory trailing
+    state produced by :func:`budget_guard.transcript.stream_session` (plus the
+    current PreToolUse call folded in by the hook), rather than a full call list.
+    ``limit`` of ``None`` or ``<= 0`` disables detection (returns ``None``).
+    """
+    if not limit or limit <= 0:
+        return None
+    if run.last is None or run.count <= 0:
+        return None
+    if run.count >= limit:
+        signature = run.last_signature or tool_signature(run.last)
+        return LoopInfo(name=run.last.name, count=run.count, signature=signature)
+    return None
+
+
 def loop_count(calls: Sequence[ToolCall]) -> int:
     """Convenience: the trailing identical-run length (0 for no calls)."""
     return trailing_repeat(list(calls))
 
 
-__all__ = ["LoopInfo", "detect_loop", "trailing_repeat", "loop_count", "ToolCall"]
+__all__ = [
+    "LoopInfo",
+    "detect_loop",
+    "detect_loop_run",
+    "trailing_repeat",
+    "loop_count",
+    "ToolCall",
+    "TrailingRun",
+]
