@@ -17,6 +17,17 @@ Environment variables:
     CLAUDE_BUDGET_LOOP_LIMIT  block when a tool call repeats N times   [unset=off]
     CLAUDE_BUDGET_CONFIG      path to a JSON overrides file            [unset]
     CLAUDE_BUDGET_OUTPUT      "json" to emit decision as stdout JSON   [stderr+exit2]
+
+``CLAUDE_BUDGET_OUTPUT=json`` emits the official PreToolUse hook contract on
+stdout and exits 0::
+
+    {"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                            "permissionDecision": "deny",
+                            "permissionDecisionReason": "<reason>"}}
+
+(The deprecated top-level ``{"decision":"block"}`` form is NOT emitted — it may
+be ignored for PreToolUse and let the blocked call through.) The default
+``exit`` mode uses exit 2 + a stderr reason, which is the most robust path.
 """
 
 from __future__ import annotations
@@ -24,6 +35,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import stat
 from dataclasses import dataclass, field
 from typing import Mapping, Optional
 
@@ -75,14 +87,36 @@ def _to_float(value: object) -> Optional[float]:
     return result if result > 0 else None
 
 
+# Cap the config file we read. A config JSON is tiny; bound it so a FIFO/device
+# or a huge file at CLAUDE_BUDGET_CONFIG can neither hang a synchronous read nor
+# exhaust memory. Over the cap (or any error) we ignore the file -> defaults.
+MAX_CONFIG_BYTES = 1024 * 1024  # 1 MiB, far above any real config
+
+
 def _load_file(path: Optional[str]) -> dict:
     if not path:
         return {}
+    fd = None
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError):
+        # Open non-blocking so a reader-less FIFO can't hang the open, then require
+        # a REGULAR file (a FIFO/device/socket/dir is ignored -> defaults) before
+        # reading at most the cap + 1 byte.
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return {}
+        raw = os.read(fd, MAX_CONFIG_BYTES + 1)
+        if len(raw) > MAX_CONFIG_BYTES:
+            return {}  # oversized config -> ignore, fall back to defaults
+        data = json.loads(raw.decode("utf-8", "replace"))
+    except (OSError, ValueError, RecursionError):
         return {}
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
     return data if isinstance(data, dict) else {}
 
 

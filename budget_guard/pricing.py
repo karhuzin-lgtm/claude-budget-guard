@@ -32,12 +32,19 @@ class ModelPrice:
 
     def cost(self, usage: Usage) -> float:
         million = 1_000_000.0
-        return (
-            usage.input_tokens * self.input
-            + usage.output_tokens * self.output
-            + usage.cache_creation_tokens * self.cache_write
-            + usage.cache_read_tokens * self.cache_read
-        ) / million
+        try:
+            return (
+                usage.input_tokens * self.input
+                + usage.output_tokens * self.output
+                + usage.cache_creation_tokens * self.cache_write
+                + usage.cache_read_tokens * self.cache_read
+            ) / million
+        except (OverflowError, ValueError):
+            # An un-priceable (astronomically large) token count multiplied by a
+            # float raises OverflowError ("int too large to convert to float").
+            # Read that as +inf: "definitely over any finite USD ceiling", never
+            # as a swallowed error that would fail-open past the budget.
+            return float("inf")
 
 
 # EXAMPLE DEFAULTS — verify current Anthropic pricing before relying on USD
@@ -65,15 +72,34 @@ class PricingTable:
         rates: Optional[Dict[str, ModelPrice]] = None,
         fallback: Optional[ModelPrice] = None,
     ) -> None:
-        self.rates = dict(DEFAULT_RATES if rates is None else rates)
+        # Normalize family keys to lowercase so matching is case-insensitive and
+        # a custom "OPUS" replaces the default "opus" instead of leaving a stale
+        # duplicate (later insertion wins). Non-str / empty keys are dropped.
+        source = DEFAULT_RATES if rates is None else rates
+        normalized: Dict[str, ModelPrice] = {}
+        for family, price in source.items():
+            if not isinstance(family, str):
+                continue
+            key = family.strip().lower()
+            if not key:
+                continue
+            normalized[key] = price
+        self.rates = normalized
         self.fallback = DEFAULT_FALLBACK if fallback is None else fallback
 
     def rate_for(self, model: str) -> ModelPrice:
         name = (model or "").lower()
+        # Choose the MOST SPECIFIC match: the LONGEST family key that is a
+        # substring of the model name. This lets a custom "claude-opus-4-8" beat
+        # the generic "opus" default regardless of insertion order (first-match
+        # would wrongly return whichever was inserted first, undercounting cost).
+        best: Optional[ModelPrice] = None
+        best_len = -1
         for family, price in self.rates.items():
-            if family.lower() in name:
-                return price
-        return self.fallback
+            if family in name and len(family) > best_len:
+                best = price
+                best_len = len(family)
+        return best if best is not None else self.fallback
 
     def cost_for_model(self, model: str, usage: Usage) -> float:
         return self.rate_for(model).cost(usage)
@@ -105,22 +131,31 @@ class PricingTable:
                 continue
             # An empty/whitespace family key is a substring of EVERY model name
             # ("" in name is always True), so it would hijack pricing for all
-            # unknown models — potentially zeroing cost. Reject it.
-            family = family.strip()
+            # unknown models — potentially zeroing cost. Reject it. Lowercase so a
+            # custom "OPUS" overrides the default "opus" (no stale duplicate).
+            family = family.strip().lower()
             if not family:
+                continue
+            # The mandatory rate fields are ``input`` AND ``output``. If either is
+            # MISSING, reject the whole entry (keep the safe existing/default rate)
+            # rather than silently defaulting it to 0 and under-counting cost — a
+            # typo like {"input":15,"ouput":75} must not zero the output rate.
+            # ``cache_write`` / ``cache_read`` MAY still fall back to ``input``
+            # when absent: that inheritance is intentional, unlike the mandatory
+            # fields, because cache rates commonly track the input rate.
+            if "input" not in spec or "output" not in spec:
                 continue
             try:
                 candidate = ModelPrice(
-                    input=float(spec.get("input", 0.0)),
-                    output=float(spec.get("output", 0.0)),
-                    cache_write=float(
-                        spec.get("cache_write", spec.get("input", 0.0))
-                    ),
-                    cache_read=float(
-                        spec.get("cache_read", spec.get("input", 0.0))
-                    ),
+                    input=float(spec["input"]),
+                    output=float(spec["output"]),
+                    cache_write=float(spec.get("cache_write", spec["input"])),
+                    cache_read=float(spec.get("cache_read", spec["input"])),
                 )
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
+                # OverflowError: float() of an enormous JSON int. Ignore the bad
+                # entry (keep the safe default) — a pricing typo must never abort
+                # from_mapping and thereby disable the independent token limit.
                 continue
             # Reject non-finite (nan/inf) or negative rates: a negative custom rate
             # would LOWER session_cost and could slip a session under a USD ceiling
