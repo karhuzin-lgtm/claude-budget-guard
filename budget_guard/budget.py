@@ -42,7 +42,15 @@ class Decision:
 
 
 def _fmt_tokens(n: int) -> str:
-    return f"{n:,}"
+    try:
+        return f"{n:,}"
+    except (ValueError, OverflowError):
+        # Python caps int<->str conversion (~4300 digits); an absurdly large
+        # count would raise here and, uncaught, fall into the hook's fail-open
+        # path — allowing a CONFIRMED breach. Report an order-of-magnitude via
+        # bit_length (no full string conversion) so the block still renders.
+        approx = int(n.bit_length() * 0.30103) + 1 if n else 1
+        return f"~10^{approx}"
 
 
 def _fmt_usd(x: float) -> str:
@@ -54,11 +62,23 @@ def decide(
     usd: float,
     config: Config,
     loop: Optional[LoopInfo] = None,
+    loop_trustworthy: bool = True,
 ) -> Decision:
     """Evaluate thresholds and return a :class:`Decision`.
 
     ``tokens`` is the deduplicated session total; ``usd`` its estimated cost.
     ``loop`` is the result of :func:`budget_guard.loops.detect_loop`, or ``None``.
+
+    ``loop_trustworthy`` gates whether a detected ``loop`` may BLOCK. Token/USD
+    breaches are MONOTONIC — spend already seen stays confirmed even under a
+    truncated/partial or content-dropping read — so they always block when over
+    ceiling. A trailing retry-loop is NON-monotonic: an unread or skipped record
+    could contain a different call that breaks the run, so a loop found on an
+    incomplete/untrustworthy read is UNPROVEN and may only warn, never block
+    (fail-open forbids blocking an unproven violation). The caller passes
+    ``loop_trustworthy=False`` when the stream was ``partial`` or the trailing run
+    was marked untrustworthy. The reasons are kept cleanly separated here so a
+    partial read can still block on token/USD while never blocking on a loop.
     """
     decision = Decision(tokens=tokens, usd=usd)
 
@@ -96,11 +116,20 @@ def decide(
             )
 
     # --- Retry-loop --------------------------------------------------------
+    # A loop may BLOCK only on a trustworthy (complete, non-dropping) read; an
+    # unproven loop from a partial/untrustworthy read may warn but never block.
     if loop is not None:
-        block_reasons.append(
-            f"Retry-loop detected: tool '{loop.name}' repeated "
-            f"{loop.count} times in a row (limit {config.loop_limit})."
-        )
+        if loop_trustworthy:
+            block_reasons.append(
+                f"Retry-loop detected: tool '{loop.name}' repeated "
+                f"{loop.count} times in a row (limit {config.loop_limit})."
+            )
+        else:
+            warn_reasons.append(
+                f"Possible retry-loop: tool '{loop.name}' repeated "
+                f"{loop.count} times in a row (limit {config.loop_limit}), but the "
+                "transcript read was incomplete/untrustworthy — allowing (unproven)."
+            )
 
     if block_reasons:
         decision.action = BLOCK
