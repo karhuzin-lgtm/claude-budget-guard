@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-budget-guard"
+version = "0.1.0"
+description = "A preventive spend guardrail (PreToolUse hook) for Claude Code — blocks a session before it blows a token/USD budget or gets stuck in a retry-loop."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Aleksei" }]
+keywords = [
+    "claude-code",
+    "hook",
+    "budget",
+    "guardrail",
+    "tokens",
+    "cost-control",
+    "anthropic",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Utilities",
+]
+dependencies = []  # stdlib only, by design
+
+[project.urls]
+Homepage = "https://github.com/karhuzin-lgtm/claude-budget-guard"
+Repository = "https://github.com/karhuzin-lgtm/claude-budget-guard"
+Issues = "https://github.com/karhuzin-lgtm/claude-budget-guard/issues"
+
+[project.scripts]
+claude-budget-guard = "budget_guard.hook:main"
+
+[tool.setuptools]
+packages = ["budget_guard"]
+
+[tool.setuptools.package-data]
+budget_guard = ["py.typed"]

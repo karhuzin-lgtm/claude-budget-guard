@@ -1,0 +1,6 @@
+{"type":"user","message":{"role":"user","content":"hi"}}
+{"type":"assistant","requestId":"req_1","message":{"role":"assistant","id":"msg_1","model":"claude-opus-4-8","content":[{"type":"text","text":"thinking"}],"usage":{"input_tokens":1000,"output_tokens":200,"cache_creation_input_tokens":500,"cache_read_input_tokens":3000}}}
+{"type":"assistant","requestId":"req_1","message":{"role":"assistant","id":"msg_1","model":"claude-opus-4-8","content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}],"usage":{"input_tokens":1000,"output_tokens":200,"cache_creation_input_tokens":500,"cache_read_input_tokens":3000}}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}
+{"type":"assistant","requestId":"req_2","message":{"role":"assistant","id":"msg_2","model":"claude-opus-4-8","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":500,"output_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":2000}}}
+{"type":"system","content":"session end"}

@@ -1,0 +1,6 @@
+{"type":"user","message":{"role":"user","content":"hi"}}
+this is not json at all
+{"type":"assistant","requestId":"ok_1","message":{"role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":800,"output_tokens":150,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+{"broken":
+[1, 2, 3]
+{"type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4-5","usage":{"input_tokens":"not-a-number","output_tokens":null}}}
