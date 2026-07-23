@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from budget_guard.loops import detect_loop, trailing_repeat
-from budget_guard.transcript import ToolCall
+from budget_guard.loops import detect_loop, detect_loop_run, trailing_repeat
+from budget_guard.transcript import ToolCall, TrailingRun
 
 
 def _calls(*specs):
@@ -76,6 +76,53 @@ class TestDetectLoop(unittest.TestCase):
 
     def test_empty_calls(self):
         self.assertIsNone(detect_loop([], 5))
+
+
+class TestDetectLoopRun(unittest.TestCase):
+    """Streaming trailing-run loop check (used by the hook hot path)."""
+
+    def _run(self, *specs):
+        run = TrailingRun()
+        for n, i in specs:
+            run.add(ToolCall(name=n, input=i))
+        return run
+
+    def test_empty_run_none(self):
+        self.assertIsNone(detect_loop_run(TrailingRun(), 5))
+
+    def test_disabled_when_limit_none_or_zero(self):
+        run = self._run(*[("Bash", {"command": "ls"})] * 20)
+        self.assertIsNone(detect_loop_run(run, None))
+        self.assertIsNone(detect_loop_run(run, 0))
+
+    def test_below_limit_none(self):
+        run = self._run(*[("Bash", {"command": "ls"})] * 3)
+        self.assertIsNone(detect_loop_run(run, 5))
+
+    def test_at_limit_detected(self):
+        run = self._run(*[("Bash", {"command": "ls"})] * 5)
+        info = detect_loop_run(run, 5)
+        self.assertIsNotNone(info)
+        self.assertEqual(info.name, "Bash")
+        self.assertEqual(info.count, 5)
+
+    def test_different_tail_resets_run(self):
+        run = self._run(
+            ("Bash", {"command": "ls"}),
+            ("Bash", {"command": "ls"}),
+            ("Read", {"file": "x"}),  # breaks the run
+        )
+        self.assertEqual(run.count, 1)
+        self.assertIsNone(detect_loop_run(run, 2))
+
+    def test_equivalent_to_detect_loop_on_same_sequence(self):
+        specs = [("Bash", {"command": "ls"})] * 6
+        run = self._run(*specs)
+        calls = [ToolCall(name=n, input=i) for n, i in specs]
+        a = detect_loop_run(run, 5)
+        b = detect_loop(calls, 5)
+        self.assertEqual((a.name, a.count), (b.name, b.count))
+        self.assertEqual(a.signature, b.signature)
 
 
 if __name__ == "__main__":

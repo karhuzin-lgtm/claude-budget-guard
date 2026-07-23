@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
 [![deps: stdlib only](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](#)
-[![tests: unittest](https://img.shields.io/badge/tests-65%20passing-brightgreen.svg)](#running-the-tests)
+[![tests: unittest](https://img.shields.io/badge/tests-156%20passing-brightgreen.svg)](#running-the-tests)
 
 Every other cost tool for Claude Code *observes* — it shows you the bill after
 the money is gone. `claude-budget-guard` *intervenes*. It runs as a `PreToolUse`
@@ -123,7 +123,7 @@ the hook always allows** — installing it can never surprise-block you.
 | `CLAUDE_BUDGET_WARN_PCT` | Warn (but still allow) at this percentage of a limit. | `80` |
 | `CLAUDE_BUDGET_LOOP_LIMIT` | Block when the identical tool call repeats this many times in a row. | unset → loop detection **off** |
 | `CLAUDE_BUDGET_CONFIG` | Path to a JSON file overriding limits and/or pricing. | unset |
-| `CLAUDE_BUDGET_OUTPUT` | `json` to emit `{"decision":"block","reason":...}` on stdout (exit 0) instead of exit-2 + stderr. | exit-2 + stderr |
+| `CLAUDE_BUDGET_OUTPUT` | `json` to emit the official PreToolUse deny payload on stdout (exit 0) instead of exit-2 + stderr (see below). | exit-2 + stderr |
 
 ### JSON config file
 
@@ -146,6 +146,36 @@ override anything set here.
 
 Pricing keys match as case-insensitive substrings of the model name (so `opus`
 matches `claude-opus-4-8`). Rates are per **million** tokens.
+
+### JSON output mode
+
+With `CLAUDE_BUDGET_OUTPUT=json`, a block is emitted on **stdout** with exit `0`
+using the official Claude Code PreToolUse hook contract:
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "[budget-guard] Token budget exceeded: ..."
+  }
+}
+```
+
+(`permissionDecision` is one of `allow` / `deny` / `ask`; the deprecated
+top-level `{"decision":"block"}` form is **not** emitted — for PreToolUse it may
+be ignored, which would let the blocked call through.) The default `exit` mode —
+exit `2` with the reason on stderr — is the most robust path and is recommended.
+
+### Partial reads
+
+The hook streams the transcript in a single bounded pass so a pathologically
+large or bloated session can never OOM the guard. If a bound trips (a >4 MiB
+physical line, more than 2,000,000 lines, or the dedup-key/model memory caps),
+the parse is **incomplete**. A confirmed breach on the portion that *was* read
+still blocks; if no breach is provable on the partial data the hook allows the
+call but prints `WARNING: transcript too large to fully account (partial read)`
+to stderr — it never silently treats a truncated prefix as a full total.
 
 ## What it detects
 
